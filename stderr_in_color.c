@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <dlfcn.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ptrace.h>
@@ -12,6 +13,7 @@
 char *color;
 const void *color_code, *end_color_code;
 size_t color_code_len, end_color_code_len;
+bool is_bash;
 
 /*
  * set_color_codes setups global variables indicating color codes
@@ -85,16 +87,36 @@ void set_color_codes()
 }
 
 /*
+ * set_is_bash checks if current process is bash and
+ * if so sets is_bash global variable to true
+ */
+void set_is_bash()
+{
+  pid_t pid = getpid();
+  char path[18];
+  sprintf(path, "%s%d%s", "/proc/", pid, "/comm");
+  FILE *stream = fopen(path, "r");
+
+  char context[5];
+  fgets(context, 5, stream);
+  if (strcmp(context, "bash") == 0) {
+    is_bash = true;
+  }
+  fclose(stream);
+}
+
+/*
  * init function executes when shared library is loaded
  */
 __attribute__((constructor)) void init()
 {
   set_color_codes();
+  set_is_bash();
 }
 
 int execve(const char *pathname, char *const argv[], char *const envp[])
 {
-  if (!fork()) {
+  if (is_bash && !fork()) {
     pid_t tracee_pid = getppid();
     bool written_color_code;
     int wstatus;
