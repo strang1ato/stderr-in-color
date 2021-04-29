@@ -13,7 +13,7 @@
 char *color;
 const void *color_code, *end_color_code;
 size_t color_code_len, end_color_code_len;
-bool is_bash;
+bool is_bash, is_terminal_setup;
 
 /*
  * set_color_codes setups global variables indicating color codes
@@ -114,38 +114,53 @@ __attribute__((constructor)) void init()
   set_is_bash();
 }
 
+size_t fwrite(const void *restrict ptr, size_t size, size_t nitems, FILE *restrict stream)
+{
+  size_t (*original_fwrite)() = (size_t (*)())dlsym(RTLD_NEXT, "fwrite");
+  size_t result = original_fwrite(ptr, size, nitems, stream);
+  if (is_bash) {
+    is_terminal_setup = true;
+  }
+  return result;
+}
+
 int execve(const char *pathname, char *const argv[], char *const envp[])
 {
-  if (is_bash && !fork()) {
-    pid_t tracee_pid = getppid();
-    bool written_color_code;
-    int wstatus;
-    ptrace(PTRACE_ATTACH, tracee_pid, NULL, NULL);
-    while(1) {
-      waitpid(tracee_pid, &wstatus, 0);
+  pid_t tracer_pid = -1;  /* Set tracer_pid to any value but not zero */
+  if (is_terminal_setup) {
+    tracer_pid = fork();
+    if (!tracer_pid) {
+      pid_t tracee_pid = getppid();
+      bool written_color_code;
+      int wstatus;
+      ptrace(PTRACE_ATTACH, tracee_pid, NULL, NULL);
+      while(1) {
+        waitpid(tracee_pid, &wstatus, 0);
 
-      if (written_color_code) {
-        write(STDOUT_FILENO, end_color_code, end_color_code_len);
-        written_color_code = false;
-      }
+        if (written_color_code) {
+          write(STDOUT_FILENO, end_color_code, end_color_code_len);
+          written_color_code = false;
+        }
 
-      if (wstatus == -1) {
-        exit(EXIT_FAILURE);
-      }
-      if (WIFEXITED(wstatus)) {
-        exit(EXIT_SUCCESS);
-      }
+        if (wstatus == -1) {
+          exit(EXIT_FAILURE);
+        }
+        if (WIFEXITED(wstatus)) {
+          exit(EXIT_SUCCESS);
+        }
 
-      struct user_regs_struct regs;
-      ptrace(PTRACE_GETREGS, tracee_pid, NULL, &regs);
-      if (regs.orig_rax == SYS_write && regs.rdi == STDERR_FILENO) {
-        write(STDERR_FILENO, color_code, color_code_len);
-        written_color_code = true;
-      }
+        struct user_regs_struct regs;
+        ptrace(PTRACE_GETREGS, tracee_pid, NULL, &regs);
+        if (regs.orig_rax == SYS_write && regs.rdi == STDERR_FILENO) {
+          write(STDERR_FILENO, color_code, color_code_len);
+          written_color_code = true;
+        }
 
-      ptrace(PTRACE_SYSCALL, tracee_pid, NULL, NULL);
+        ptrace(PTRACE_SYSCALL, tracee_pid, NULL, NULL);
+      }
     }
-  } else {
+  }
+  if (tracer_pid) {
     int (*original_execve)() = (int (*)())dlsym(RTLD_NEXT, "execve");
     int status = original_execve(pathname, argv, envp);
     return status;
