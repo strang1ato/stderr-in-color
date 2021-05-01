@@ -116,6 +116,10 @@ __attribute__((constructor)) void init()
   set_is_bash();
 }
 
+/*
+ * fwrite sets is_terminal_setup if is_bash and runs original shared library call.
+ * It looks like fwrite in bash is used first time for writing prompt. At this point terminal is set up.
+ */
 size_t fwrite(const void *restrict ptr, size_t size, size_t nitems, FILE *restrict stream)
 {
   size_t (*original_fwrite)() = (size_t (*)())dlsym(RTLD_NEXT, "fwrite");
@@ -126,6 +130,10 @@ size_t fwrite(const void *restrict ptr, size_t size, size_t nitems, FILE *restri
   return result;
 }
 
+/*
+ * execve attaches tracer and runs original shared library call.
+ * execve is used by bash to execute program(s) defined in command.
+ */
 int execve(const char *pathname, char *const argv[], char *const envp[])
 {
   sem_t *sem;
